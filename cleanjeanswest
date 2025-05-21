@@ -56,6 +56,28 @@ df['tmallSweetPic'] = df['tmallSweetPic'].fillna(method='bfill')
 # 转换 rateDate 列的数据类型为日期时间类型
 df['rateDate'] = pd.to_datetime(df['rateDate'])
 
+# -----------------------------------------------------
+# ✅ 统计每个商品编号的评论数量（近似销售量）
+# -----------------------------------------------------
+item_sales = df['_itemnumber_'].value_counts().reset_index()
+item_sales.columns = ['_itemnumber_', 'comment_count']
+
+# -----------------------------------------------------
+# ✅ 方法 3：按销量估计价格
+# -----------------------------------------------------
+def estimate_by_sales(sales_count):
+    if sales_count >= 200:
+        return 145  # 热卖款
+    elif sales_count >= 100:
+        return 175
+    else:
+        return 240
+
+item_sales['estimated_price_by_sales'] = item_sales['comment_count'].apply(estimate_by_sales)
+
 # 将清洗后的数据保存为 xlsx 文件
 xlsx_path = '评论_真维斯_清洗后.xlsx'
 df.to_excel(xlsx_path, index=False)
+# 2. 保存商品销售统计表，含估计价格
+item_sales.to_excel('真维斯_商品销售统计.xlsx', index=False)
+print("✅ 已成功生成并保存包含估计价格的销售统计文件！")
