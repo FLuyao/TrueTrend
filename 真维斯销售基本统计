@@ -1,0 +1,75 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+import os
+import matplotlib
+from matplotlib import rcParams
+
+# 尝试设置中文字体（使用系统自带字体）
+try:
+    # Windows系统通常自带微软雅黑
+    rcParams['font.sans-serif'] = ['Microsoft YaHei']  # 或 ['SimHei']
+    rcParams['axes.unicode_minus'] = False  # 解决负号显示问题
+except:
+    print("警告：中文字体设置失败，图表可能无法正常显示中文")
+
+# 读取Excel文件
+try:
+    df = pd.read_excel('评论_真维斯_清洗后.xlsx')
+except FileNotFoundError:
+    print("错误：找不到文件 '评论_真维斯_清洗后.xlsx'")
+    exit()
+
+# 按天统计评论数量
+daily_counts = df['rateDate'].dt.date.value_counts().sort_index()
+# 按月统计评论数量
+monthly_counts = df['rateDate'].dt.to_period('M').value_counts().sort_index()
+
+# 创建输出目录
+output_dir = '销售统计图表'
+os.makedirs(output_dir, exist_ok=True)
+
+# 绘制每日评论数量图表
+plt.figure(figsize=(14, 7))  # 增大图表尺寸
+ax = daily_counts.plot(kind='bar', color='skyblue')
+plt.title('每日销售数量统计')
+plt.xlabel('日期')
+plt.ylabel('销售数量')
+plt.grid(axis='y', linestyle='--', alpha=0.7)
+
+# 设置x轴标签：每7天显示一个
+n = 7  # 每7个显示一个
+ticks = ax.xaxis.get_ticklocs()  # 获取所有刻度位置
+tick_labels = [label.get_text() if i%n == 0 else '' for i, label in enumerate(ax.xaxis.get_ticklabels())]
+ax.xaxis.set_ticks(ticks)
+ax.xaxis.set_ticklabels(tick_labels)
+
+plt.tight_layout()  # 调整布局防止标签重叠
+try:
+    plt.savefig(f'{output_dir}/每日销售数量.png', dpi=300, bbox_inches='tight')
+except Exception as e:
+    print(f"保存每日销售图表时出错: {e}")
+plt.close()
+
+# 绘制每月评论数量图表
+plt.figure(figsize=(10, 6))
+monthly_counts.plot(kind='bar', color='lightgreen')
+plt.title('每月销售数量统计')
+plt.xlabel('月份')
+plt.ylabel('销售数量')
+plt.xticks(rotation=45)
+plt.grid(axis='y', linestyle='--', alpha=0.7)
+try:
+    plt.tight_layout()
+    plt.savefig(f'{output_dir}/每月销售数量.png', dpi=300, bbox_inches='tight')
+except Exception as e:
+    print(f"保存每月销售图表时出错: {e}")
+plt.close()
+
+# 保存统计数据到Excel
+try:
+    with pd.ExcelWriter(f'{output_dir}/销售统计结果.xlsx') as writer:
+        daily_counts.to_excel(writer, sheet_name='每日销售数量')
+        monthly_counts.to_excel(writer, sheet_name='每月销售数量')
+    print(f'统计完成，结果已保存到"{output_dir}"文件夹')
+except Exception as e:
+    print(f"保存统计结果到Excel时出错: {e}")
