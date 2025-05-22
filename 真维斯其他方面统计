@@ -1,0 +1,68 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
+import seaborn as sns
+from collections import Counter
+import jieba  # 中文分词库
+
+# 读取 Excel 文件
+excel_file = pd.ExcelFile('评论_真维斯_清洗后.xlsx')
+
+# 获取指定工作表中的数据
+df = excel_file.parse('Sheet1')
+
+#2.颜色编号top5
+# 解析颜色信息（从auctionSku字段提取）
+df['颜色'] = df['auctionSku'].apply(lambda x: x.split(';')[0].split(':')[1] if '颜色' in x else '未知')
+颜色分布 = df['颜色'].value_counts().head(5).reset_index(name='评价数量')
+
+
+#显示中文字体
+plt.rcParams['font.sans-serif'] = ['SimHei']
+plt.rcParams['axes.unicode_minus'] = False
+
+plt.figure(figsize=(8, 4))
+plt.bar(颜色分布['颜色'], 颜色分布['评价数量'], color=['#0066CC', '#339933', '#FF6666', '#9966CC', '#FFCC33'])
+plt.title('用户颜色偏好TOP5', fontsize=14)
+plt.xlabel('颜色',fontsize=12 )
+plt.ylabel('销售数量', fontsize=12)
+plt.xticks(rotation=30)
+plt.show()
+
+#3.尺码偏好分布
+df['尺码'] = df['auctionSku'].apply(lambda x: x.split(';')[1].split(':')[1] if '尺码' in x else '未知')
+尺码分布 = df['尺码'].value_counts().head(5).reset_index(name='评价数量')
+
+plt.figure(figsize=(8, 4))
+plt.pie(尺码分布['评价数量'], labels=尺码分布['尺码'], autopct='%1.1f%%', colors=['#FFE0B2', '#FFCC80', '#FFB74D', '#FFA726', '#FB8C00'])
+plt.title('尺码分布占比', fontsize=14)
+plt.axis('equal')
+plt.show()
+
+#4.评价情感分布
+# 情感分类（添加缺失值处理）
+正面词 = ['满意', '喜欢', '不错', '超值', '质量好', '保暖', '时尚', '好', '赞']
+负面词 = ['差', '垃圾', '失望', '退货', '漏绒', '服务差', '物流慢', '不好', '差']
+
+# 将缺失值填充为空字符串
+df['rateContent'] = df['rateContent'].fillna('')
+
+# 定义情感分类函数（更灵活的匹配逻辑）
+def classify_sentiment(text):
+    # 检查是否包含负面词
+    if any(word in text for word in 负面词):
+        return '差评'
+    # 检查是否包含正面词
+    elif any(word in text for word in 正面词):
+        return '好评'
+    # 中性评价
+    else:
+        return '中性'
+
+# 应用情感分类
+df['情感标签'] = df['rateContent'].apply(classify_sentiment)
+
+# 统计情感分布
+情感分布 = df['情感标签'].value_counts(normalize=True).mul(100).round(1).reset_index()
+print("情感分布：\n", 情感分布)
