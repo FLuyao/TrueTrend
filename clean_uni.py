@@ -3,19 +3,16 @@ import pandas as pd
 import numpy as np
 import json, ast, re
 from pandas import json_normalize
-##############################################################################
+
+
 # 0. 读入原始数据
-##############################################################################
-# 假设原文件叫 reviews_raw.tsv（制表符分隔）
 df = pd.read_excel(
-    "comment_uni.xlsx",
+    "reviews_uni.xls",
     dtype=str,                       # 先全部按字符串读入，后面再分列转类型
     na_values=["", "null", "NULL", "NaN"]
 )
 
-##############################################################################
 # 1. 基础清洗
-##############################################################################
 # 去掉列名里的星号/首尾空格，统一 snake_case
 def clean_colname(c):
     return re.sub(r"\*|\s+", "", c).strip().lower()
@@ -33,7 +30,7 @@ else:
 # 将 'true'/'false' → 布尔；若有缺失保持 NaN
 bool_cols = ["alimallseller", "anony", "frommall", "frommemory"]
 for col in bool_cols:
-    df[col] = df[col].str.upper().map({"TRUE": True, "FALSE": False})
+    df[col] = df[col].str.upper().map({"TRUE": True, "FALSE": False, "1":True, "0":False})
 
 # 科学计数字符串 → 数值类型
 num_cols = [
@@ -51,9 +48,8 @@ for col in ts_cols:
 # 普通日期字符串列
 df["ratedate_dt"] = pd.to_datetime(df["ratedate"], errors="coerce")
 
-##############################################################################
+
 # 2. 解析 & 展开嵌套 JSON / KV 字符串
-##############################################################################
 def parse_pseudo_json(x):
     """把单引号、u'xxx' 形式转换成真正的 dict。失败时返回空 dict。"""
     if pd.isna(x) or not isinstance(x, str) or not x.strip():
@@ -80,9 +76,7 @@ attr_df = attr_df.add_prefix("attr_")
 # 和主表横向拼接
 df = pd.concat([df.drop(columns=["attributesmap"]), attr_df], axis=1)
 
-##############################################################################
 # 3. 文本标准化（示例：ratecontent 去掉换行、首尾空格）
-##############################################################################
 df["ratecontent"] = (
     df["ratecontent"]
     .fillna("")
@@ -90,13 +84,11 @@ df["ratecontent"] = (
     .str.strip()
 )
 
-##############################################################################
 # 4. 保存清洗结果
-##############################################################################
 df.to_excel(
-    "reviews_clean.xlsx",
+    "reviews_uni_clean.xlsx",
     index=False,
     engine="openpyxl"      # 或 "xlsxwriter"，两者二选一都行
 )
 
-print("✅ 数据清洗完成，保存为  reviews_clean.xlsx")
+print("✅ 数据清洗完成，保存为  reviews_uni_clean.xlsx")
