@@ -2,7 +2,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from collections import Counter
 import re
-
+plt.rcParams['font.sans-serif'] = ['SimHei']        # 黑体
+plt.rcParams['axes.unicode_minus'] = False
 class BrandSalesAnalyzer:
     """竞争对比分析工具：完成销售汇总、趋势、热销、满意度与 SKU 分布图。"""
 
@@ -21,6 +22,43 @@ class BrandSalesAnalyzer:
         # 兼容不同文件版本的商品编号列
         self._ensure_itemnumber_column(self.uniqlo_reviews)
         self._ensure_itemnumber_column(self.jeanswest_sales, source_col="_itemnumber_")
+
+
+
+    def extract_color_size(self, series):
+        """
+        兼容两种格式：
+        · 颜色:酒红; 尺码:M
+        · 颜色分类#3B14 玛瑙红色#3A尺码#3B160/88A/L
+        """
+        colors, sizes = [], []
+
+        for txt in series.dropna().astype(str):
+            # ---------- 颜色 ----------
+            # 先匹配 '颜色分类#XXXX 空格 颜色名'
+            m_color = re.search(r'颜色(?:分类)?[^#]*#\w+\s*([^\#;:\s]+)', txt)
+            # 再匹配 '颜色[:：] 颜色名'
+            if not m_color:
+                m_color = re.search(r'颜色[:：]?\s*([^\s;，#]+)', txt)
+            # 备份英文 Color
+            if not m_color:
+                m_color = re.search(r'color[^#:：;]*[:\s]*([^\d#/;:\s]+)', txt, re.I)
+            if m_color:
+                colors.append(m_color.group(1).strip())
+
+            # ---------- 尺码 ----------
+            # 匹配 '尺码#XXXX 空格 尺码值'
+            m_size = re.search(r'尺码[^#;:\s]*#\w+\s*([^\#;:\s]+)', txt)
+            # 匹配 '尺码[:：] 尺码值'
+            if not m_size:
+                m_size = re.search(r'尺码[:：]?\s*([^\s;，#]+)', txt)
+            # 备份英文 Size
+            if not m_size:
+                m_size = re.search(r'size[^#:：;]*[:\s]*([A-Za-z0-9/XL\-]+)', txt, re.I)
+            if m_size:
+                sizes.append(m_size.group(1).strip())
+
+        return Counter(colors), Counter(sizes)
 
     # --------------------------------------------- 内部工具 -------------------------------------------------- #
     @staticmethod
@@ -143,7 +181,7 @@ class BrandSalesAnalyzer:
 
     def plot_sku_distributions(self):
         colors_j, sizes_j = self._extract_color_size(self.jeanswest_reviews.get("auctionsku", pd.Series(dtype=str)))
-        colors_u, sizes_u = self._extract_color_size(self.uniqlo_reviews.get("attr_sku", pd.Series(dtype=str)))
+        colors_u, sizes_u = self.extract_color_size(self.uniqlo_reviews.get("attr_sku", pd.Series(dtype=str)))
 
         colors_j_top = dict(Counter(colors_j).most_common(10))
         colors_u_top = dict(Counter(colors_u).most_common(10))
