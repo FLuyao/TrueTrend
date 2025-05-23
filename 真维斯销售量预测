@@ -156,6 +156,4 @@ result_df.to_excel(f'{output_dir}/预测结果.xlsx', index=False)
 
 print("预测完成！结果已保存至:", output_dir)
 print("生成图表包括:")
-print(f"1. 每日销售量线性图: {output_dir}/日销售量线性图.png")
-print(f"2. 月度销售量条形图: {output_dir}/月销售量条形图.png")
 print(f"3. 预测结果图: {output_dir}/预测结果.png")
