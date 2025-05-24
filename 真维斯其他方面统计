@@ -1,68 +1,144 @@
 import pandas as pd
-import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.font_manager as fm
-import seaborn as sns
-from collections import Counter
-import jieba  # 中文分词库
+import os
+import sys
+import subprocess
 
-# 读取 Excel 文件
-excel_file = pd.ExcelFile('评论_真维斯_清洗后.xlsx')
+# 设置中文字体
+plt.rcParams["font.family"] = ["SimHei", "WenQuanYi Micro Hei", "Heiti TC"]
 
-# 获取指定工作表中的数据
-df = excel_file.parse('Sheet1')
+# 自动查找文件路径
+def find_data_files():
+    candidates = [
+        ('真维斯_商品销售统计.xlsx', '评论_真维斯_清洗后.xlsx'),
+        ('sales_data.xlsx', 'reviews_data.xlsx'),
+        ('商品销售.xlsx', '商品评论.xlsx')
+    ]
+    base_dirs = [os.path.expanduser('~'), os.getcwd(), os.path.join(os.path.expanduser('~'), 'Desktop')]
+    for base in base_dirs:
+        for sales, reviews in candidates:
+            sales_path = os.path.join(base, sales)
+            reviews_path = os.path.join(base, reviews)
+            if os.path.exists(sales_path) and os.path.exists(reviews_path):
+                return sales_path, reviews_path
+    return None, None
 
-#2.颜色编号top5
-# 解析颜色信息（从auctionSku字段提取）
-df['颜色'] = df['auctionSku'].apply(lambda x: x.split(';')[0].split(':')[1] if '颜色' in x else '未知')
-颜色分布 = df['颜色'].value_counts().head(5).reset_index(name='评价数量')
+def safe_read(path):
+    try:
+        df = pd.read_excel(path)
+        print(f"✅ 成功读取: {path}")
+        return df
+    except Exception as e:
+        print(f"❌ 读取失败: {path}\n错误: {str(e)}")
+        return None
+
+# 提取颜色
+def extract_color(sku):
+    if pd.isna(sku): return None
+    try:
+        return str(sku).split("颜色:")[1].split(";")[0].split()[0]
+    except:
+        return None
+
+# 提取尺码
+def extract_size(sku):
+    if pd.isna(sku): return None
+    try:
+        return str(sku).split("尺码:")[1].split()[0]
+    except:
+        return None
+
+# 主流程
+def main():
+    sales_path, reviews_path = find_data_files()
+    if not sales_path or not reviews_path:
+        print("❌ 未找到销售或评论数据文件")
+        sys.exit(1)
+
+    df_sales = safe_read(sales_path)
+    df_reviews = safe_read(reviews_path)
+    
+    # =================== 自动生成情感分类列 ===================
+    positive_words = ['好', '满意', '喜欢', '合适', '划算', '值得', '舒服', '惊喜', '便宜', '正品', '赞']
+    negative_words = ['差', '失望', '难看', '不好', '退货', '质量问题', '不值', '做工差', '色差', '起球']
+
+    def analyze_sentiment(text):
+        if pd.isna(text) or text.strip() == '':
+            return '中性'
+        text = str(text).lower()
+        pos_count = sum(1 for word in positive_words if word in text)
+        neg_count = sum(1 for word in negative_words if word in text)
+        if pos_count > 0 and neg_count == 0:
+            return '好评'
+        elif neg_count > 0 and pos_count == 0:
+            return '差评'
+        elif pos_count > neg_count:
+            return '好评'
+        elif neg_count > pos_count:
+            return '差评'
+        else:
+            return '中性'
+        
+
+    df_reviews["情感分类"] = df_reviews["rateContent"].apply(analyze_sentiment)
+    print("✅ 已成功为评论数据添加情感分类列")
 
 
-#显示中文字体
-plt.rcParams['font.sans-serif'] = ['SimHei']
-plt.rcParams['axes.unicode_minus'] = False
+    required_cols = {
+        'sales': ['_itemnumber_', 'comment_count', 'estimated_price_by_sales'],
+        'reviews': ['_itemnumber_', 'auctionSku', '情感分类']
+    }
 
-plt.figure(figsize=(8, 4))
-plt.bar(颜色分布['颜色'], 颜色分布['评价数量'], color=['#0066CC', '#339933', '#FF6666', '#9966CC', '#FFCC33'])
-plt.title('用户颜色偏好TOP5', fontsize=14)
-plt.xlabel('颜色',fontsize=12 )
-plt.ylabel('销售数量', fontsize=12)
-plt.xticks(rotation=30)
-plt.show()
+    for name, cols in required_cols.items():
+        df = locals().get(f'df_{name}')
+        if df is None:
+            print(f"❌ 未能加载 {name} 数据")
+            sys.exit(1)
+        missing = [col for col in cols if col not in df.columns]
+        if missing:
+            print(f"❌ {name} 缺少列: {missing}")
+            print("现有列:", df.columns.tolist())
+            sys.exit(1)
 
-#3.尺码偏好分布
-df['尺码'] = df['auctionSku'].apply(lambda x: x.split(';')[1].split(':')[1] if '尺码' in x else '未知')
-尺码分布 = df['尺码'].value_counts().head(5).reset_index(name='评价数量')
+    df_reviews["颜色"] = df_reviews["auctionSku"].apply(extract_color)
+    df_reviews["尺码"] = df_reviews["auctionSku"].apply(extract_size)
 
-plt.figure(figsize=(8, 4))
-plt.pie(尺码分布['评价数量'], labels=尺码分布['尺码'], autopct='%1.1f%%', colors=['#FFE0B2', '#FFCC80', '#FFB74D', '#FFA726', '#FB8C00'])
-plt.title('尺码分布占比', fontsize=14)
-plt.axis('equal')
-plt.show()
+    df_merge = pd.merge(df_sales, df_reviews, on="_itemnumber_", how="inner")
 
-#4.评价情感分布
-# 情感分类（添加缺失值处理）
-正面词 = ['满意', '喜欢', '不错', '超值', '质量好', '保暖', '时尚', '好', '赞']
-负面词 = ['差', '垃圾', '失望', '退货', '漏绒', '服务差', '物流慢', '不好', '差']
+    # Top10 商品销量
+    top_items = df_sales.groupby("_itemnumber_")["comment_count"].sum().nlargest(10)
+    plt.figure(figsize=(10,6))
+    bars = plt.bar(top_items.index.astype(str), top_items.values, color="#4B96E9")
+    for bar in bars:
+        plt.text(bar.get_x()+bar.get_width()/2, bar.get_height(), f"{int(bar.get_height())}", ha="center", va="bottom")
+    plt.title("真维斯最受欢迎商品Top10（按销量）")
+    plt.xlabel("商品编号")
+    plt.ylabel("销量")
+    plt.tight_layout()
+    plt.savefig(os.path.join(desktop, "真维斯商品销量Top10.png"), dpi=120)
+    print("✅ 商品销量图已保存")
 
-# 将缺失值填充为空字符串
-df['rateContent'] = df['rateContent'].fillna('')
+    # 尺码偏好
+    df_merge['尺码'] =  df_merge['auctionSku'].apply(lambda x: x.split(';')[1].split(':')[1] if '尺码' in x else '未知')
+    尺码分布 =  df_merge['尺码'].value_counts().head(5).reset_index(name='评价数量')
 
-# 定义情感分类函数（更灵活的匹配逻辑）
-def classify_sentiment(text):
-    # 检查是否包含负面词
-    if any(word in text for word in 负面词):
-        return '差评'
-    # 检查是否包含正面词
-    elif any(word in text for word in 正面词):
-        return '好评'
-    # 中性评价
-    else:
-        return '中性'
+    plt.figure(figsize=(8, 4))
+    plt.pie(尺码分布['评价数量'], labels=尺码分布['尺码'], autopct='%1.1f%%',
+            colors=['#FFE0B2', '#FFCC80', '#FFB74D', '#FFA726', '#FB8C00'])
+    plt.title('尺码分布占比', fontsize=14)
+    plt.axis('equal')
+    plt.show()
 
-# 应用情感分类
-df['情感标签'] = df['rateContent'].apply(classify_sentiment)
+    # 情感分布
+    sentiment_stats = df_merge["情感分类"].value_counts()
+    plt.figure(figsize=(6,6))
+    plt.pie(sentiment_stats, labels=sentiment_stats.index, autopct='%1.1f%%', colors=["#7CFC00", "#FF6347", "#FFD700"])
+    plt.title("评论情感分布")
+    plt.tight_layout()
+    plt.savefig(os.path.join(desktop, "真维斯情感分布.png"), dpi=120)
+    print("✅ 情感分布图已保存")
 
-# 统计情感分布
-情感分布 = df['情感标签'].value_counts(normalize=True).mul(100).round(1).reset_index()
-print("情感分布：\n", 情感分布)
+if __name__ == "__main__":
+    desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+    main()
+
