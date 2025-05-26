@@ -1,0 +1,201 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+import os
+import sys
+import subprocess
+from matplotlib import rcParams
+
+# ========== 中文字体配置 ==========
+try:
+    rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei', 'Arial Unicode MS', 'AppleGothic', 'WenQuanYi Zen Hei']
+    rcParams['axes.unicode_minus'] = False
+except:
+    print("⚠️ 系统可能缺少中文字体，尝试使用默认字体")
+
+# ========== 文件路径配置 ==========
+desktop = os.path.join(os.path.expanduser('~'), 'Desktop')
+save_path_qty = os.path.join(desktop, "真维斯商品销售量（全部）.png")
+save_path_rev = os.path.join(desktop, "真维斯商品销售总额（全部）.png")
+
+# ========== 数据读取函数 ==========
+def safe_read(path):
+    try:
+        df = pd.read_excel(path, engine='openpyxl')
+        print(f"✅ 成功读取: {path}")
+        return df
+    except Exception as e:
+        print(f"❌ 读取失败: {path}\n错误: {str(e)}")
+        return None
+
+# ========== 自动查找数据文件 ==========
+def find_data_files():
+    possible_files = [
+        ('真维斯_商品销售统计.xlsx', '评论_真维斯_清洗后.xlsx'),
+        ('sales_data.xlsx', 'reviews_data.xlsx'),
+        ('商品销售.xlsx', '商品评论.xlsx')
+    ]
+    
+    search_dirs = [
+        os.path.join(os.path.expanduser('~'), 'Desktop'),
+        os.getcwd()
+    ]
+    
+    for dir_path in search_dirs:
+        for sales_name, reviews_name in possible_files:
+            sales_path = os.path.join(dir_path, sales_name)
+            reviews_path = os.path.join(dir_path, reviews_name)
+            if os.path.exists(sales_path) and os.path.exists(reviews_path):
+                return sales_path, reviews_path
+    
+    return None, None
+
+# ========== 主程序 ==========
+print("\n🔍 正在查找数据文件...")
+sales_path, reviews_path = find_data_files()
+
+if not sales_path or not reviews_path:
+    print("❌ 错误：找不到数据文件！")
+    print("请确保以下文件存在于桌面或脚本目录：")
+    print("1. 销售数据文件（如：真维斯_商品销售统计.xlsx）")
+    print("2. 评论数据文件（如：评论_真维斯_清洗后.xlsx）")
+    sys.exit(1)
+
+print(f"\n📁 找到文件：\n- 销售数据: {sales_path}\n- 评论数据: {reviews_path}")
+
+# 读取数据
+df_sales = safe_read(sales_path)
+df_reviews = safe_read(reviews_path)
+
+# 检查必要列
+required_cols = {
+    'sales': ['_itemnumber_', 'comment_count', 'estimated_price_by_sales'],
+    'reviews': ['_itemnumber_']
+}
+
+for df_type, cols in required_cols.items():
+    df = globals()[f'df_{df_type}']
+    missing = [col for col in cols if col not in df.columns]
+    if missing:
+        print(f"❌ 错误：{df_type}表缺少列: {missing}")
+        print("现有列:", df.columns.tolist())
+        sys.exit(1)
+
+# 计算销售总额
+print("\n🔢 正在计算销售总额...")
+df_sales['total_sales'] = df_sales['estimated_price_by_sales'] * df_sales['comment_count']
+
+# 合并数据并按商品编号排序
+df_merged = pd.merge(
+    df_sales[["_itemnumber_", "comment_count", "total_sales"]],
+    df_reviews[["_itemnumber_"]].drop_duplicates(),
+    on="_itemnumber_",
+    how="inner"
+).sort_values('_itemnumber_')  # 按商品编号排序
+
+# 获取全部商品数据（不筛选Top10）
+all_by_quantity = df_merged.groupby("_itemnumber_")["comment_count"].sum()
+all_by_revenue = df_merged.groupby("_itemnumber_")["total_sales"].sum()
+
+# =============================================
+# 图1：销售量分析（全部商品）
+# =============================================
+plt.figure(figsize=(16, 8))
+bars_qty = plt.bar(
+    all_by_quantity.index.astype(str), 
+    all_by_quantity.values, 
+    color='#4B96E9',
+    width=0.8
+)
+
+# 优化显示：每隔N个商品显示一个标签
+step = max(1, len(all_by_quantity) // 20)  # 自动计算标签间隔
+plt.xticks(range(0, len(all_by_quantity), step), 
+           all_by_quantity.index.astype(str)[::step],
+           rotation=45, ha='right')
+
+plt.title("真维斯商品销售量（全部商品）", fontsize=16, pad=20)
+plt.xlabel("商品编号", fontsize=12)
+plt.ylabel("销售数量", fontsize=12)
+plt.grid(axis='y', alpha=0.3)
+
+# 添加平均值参考线
+mean_qty = all_by_quantity.mean()
+plt.axhline(mean_qty, color='red', linestyle='--', linewidth=1)
+plt.text(len(all_by_quantity)*0.98, mean_qty*1.05, 
+         f'平均销量: {mean_qty:,.0f}', 
+         ha='right', va='bottom', color='red')
+
+plt.tight_layout()
+
+# 保存销售量图片
+print(f"\n💾 正在保存销售量图片到: {save_path_qty}")
+plt.savefig(save_path_qty, dpi=150, bbox_inches='tight')
+plt.close()
+
+# =============================================
+# 图2：销售总额分析（全部商品）
+# =============================================
+plt.figure(figsize=(16, 8))
+bars_rev = plt.bar(
+    all_by_revenue.index.astype(str), 
+    all_by_revenue.values, 
+    color='#FF6B6B',
+    width=0.8
+)
+
+# 优化显示：每隔N个商品显示一个标签
+step = max(1, len(all_by_revenue) // 20)  # 自动计算标签间隔
+plt.xticks(range(0, len(all_by_revenue), step), 
+           all_by_revenue.index.astype(str)[::step],
+           rotation=45, ha='right')
+
+plt.title("真维斯商品销售总额（全部商品）", fontsize=16, pad=20)
+plt.xlabel("商品编号", fontsize=12)
+plt.ylabel("销售总额", fontsize=12)
+plt.grid(axis='y', alpha=0.3)
+
+# 添加平均值参考线和￥标签
+mean_rev = all_by_revenue.mean()
+plt.axhline(mean_rev, color='blue', linestyle='--', linewidth=1)
+plt.text(len(all_by_revenue)*0.98, mean_rev*1.05, 
+         f'平均销售额: ￥{mean_rev:,.0f}', 
+         ha='right', va='bottom', color='blue')
+
+# 添加精选的￥标签（只显示前5和后5个商品）
+for i, (item, value) in enumerate(all_by_revenue.items()):
+    if i < 5 or i >= len(all_by_revenue)-5:  # 只标注首尾各5个商品
+        plt.text(i, value + max(all_by_revenue)*0.01, 
+                 f"￥{value:,.0f}", 
+                 rotation=90, ha='center', va='bottom',
+                 fontsize=8)
+
+plt.tight_layout()
+
+# 保存销售总额图片
+print(f"💾 正在保存销售总额图片到: {save_path_rev}")
+plt.savefig(save_path_rev, dpi=150, bbox_inches='tight')
+plt.close()
+
+# ========== 尝试打开图片 ==========
+def try_open_image(path):
+    print(f"\n🔄 尝试打开图片: {path}")
+    try:
+        if sys.platform == 'win32':
+            os.startfile(path)
+        elif sys.platform == 'darwin':
+            subprocess.run(['open', path])
+        else:
+            subprocess.run(['xdg-open', path])
+        print("✅ 图片已成功打开！")
+    except Exception as e:
+        print(f"⚠️ 自动打开失败，请手动访问")
+        print(f"错误详情: {str(e)}")
+
+try_open_image(save_path_qty)
+try_open_image(save_path_rev)
+
+# 最终验证
+print("\n✔️ 验证生成结果:")
+print(f"- 销售量图表: {save_path_qty} ({os.path.getsize(save_path_qty)/1024:.1f} KB)")
+print(f"- 销售额图表: {save_path_rev} ({os.path.getsize(save_path_rev)/1024:.1f} KB)")
+print(f"- 分析商品总数: {len(all_by_quantity)}个")

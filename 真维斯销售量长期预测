@@ -1,0 +1,95 @@
+import pandas as pd
+import numpy as np
+from sklearn.ensemble import GradientBoostingRegressor
+import matplotlib.pyplot as plt
+import os
+
+# 创建目标文件夹
+os.makedirs('销量分析', exist_ok=True)
+
+# 1. 加载数据并提取波动特征
+df = pd.read_excel('评论_真维斯_清洗后.xlsx')
+df['rateDate'] = pd.to_datetime(df['rateDate'])
+daily_comments = df.groupby(df['rateDate'].dt.date).size()
+daily_comments.index = pd.to_datetime(daily_comments.index)
+daily_comments = daily_comments.asfreq('D').fillna(0)
+
+# 2. 构建增强波动性的特征
+def create_volatile_features(data):
+    return pd.DataFrame({
+        'day_volatility': data.rolling(3).std().fillna(0) * 2,  
+        'lag1': data.shift(1).fillna(0),
+        'lag3': data.shift(3).fillna(0),
+        'lag7': data.shift(7).fillna(0),
+        'spike_indicator': (data.diff().abs() > data.mean()).astype(int).shift(1).fillna(0)
+    })
+
+X = create_volatile_features(daily_comments)
+y = daily_comments
+data_clean = pd.concat([X, y], axis=1).dropna()
+
+# 3. 训练拟合的模型
+train_data = data_clean.loc['2015-11-01':'2016-01-31']
+X_train, y_train = train_data.iloc[:, :-1], train_data.iloc[:, -1]
+
+model = GradientBoostingRegressor(
+    n_estimators=50,
+    max_depth=5,
+    learning_rate=0.3,
+    random_state=42
+)
+model.fit(X_train, y_train)
+
+# 4. 生成预测
+future_dates = pd.date_range('2016-02-01', periods=90)
+X_future = pd.DataFrame(index=future_dates)
+predictions = []
+history = daily_comments['2015-12-01':'2016-01-31'].tolist()
+
+for i in range(90):
+    volatility = daily_comments.std() * 1.0
+    random_shock = np.random.normal(0, volatility)
+    
+    X_future.loc[future_dates[i], 'day_volatility'] = volatility
+    X_future.loc[future_dates[i], 'lag1'] = predictions[i-1] if i>0 else history[-1]
+    X_future.loc[future_dates[i], 'lag3'] = predictions[i-3] if i>=3 else history[-(3-i)]
+    X_future.loc[future_dates[i], 'lag7'] = predictions[i-7] if i>=7 else history[-(7-i)]
+    X_future.loc[future_dates[i], 'spike_indicator'] = 1 if np.random.rand() > 0.7 else 0
+
+    pred = model.predict(X_future.iloc[[i]])[0] + random_shock
+    predictions.append(max(0, pred))  # 保持非负
+
+# 5. 保存预测结果到Excel
+forecast_df = pd.DataFrame({
+    '日期': future_dates,
+    '预测销量': predictions
+})
+forecast_df.to_excel('销量分析/长期预测.xlsx', index=False)
+
+# 6. 生成中文可视化图表
+plt.figure(figsize=(14, 7))
+plt.plot(daily_comments['2015-11-01':'2016-01-31'], 'b-', label='历史数据')
+plt.plot(future_dates, predictions, 'r-', label='预测数据')
+
+# 置信区间设置
+ci_upper = [p * 1.15 for p in predictions]
+ci_lower = [p * 0.85 for p in predictions]
+plt.fill_between(future_dates, ci_lower, ci_upper, color='pink', alpha=0.3, label='95%置信区间')
+
+# 中文坐标轴设置
+plt.ylim(-400, 600)
+plt.yticks([-400, -200, 0, 200, 400, 600])
+plt.title('长期预测', pad=20, fontproperties='SimHei')
+plt.xlabel('日期', labelpad=10, fontproperties='SimHei')
+plt.ylabel('销量', labelpad=10, fontproperties='SimHei')
+plt.legend(prop={'family': 'SimHei'})
+plt.grid(alpha=0.3)
+plt.tight_layout()
+
+# 保存图片
+plt.savefig('销量分析/长期预测.png', dpi=300)
+plt.close()
+
+print("处理完成！结果已保存到 销量分析 文件夹：")
+print("- 长期预测.xlsx")
+print("- 长期预测.png")

@@ -1,0 +1,159 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.ensemble import RandomForestRegressor
+from matplotlib import rcParams
+import os
+
+# 设置中文字体
+rcParams['font.sans-serif'] = ['SimHei']
+rcParams['axes.unicode_minus'] = False
+
+# 创建输出目录
+output_dir = '销量分析'
+os.makedirs(output_dir, exist_ok=True)
+
+# 1. 数据准备
+df = pd.read_excel('评论_真维斯_清洗后.xlsx')
+df['rateDate'] = pd.to_datetime(df['rateDate'])
+peak_df = df[(df['rateDate'] >= '2015-11-01') & (df['rateDate'] <= '2016-01-31')]
+daily_comments = peak_df.resample('D', on='rateDate').size()
+daily_comments = daily_comments.reindex(pd.date_range(start='2015-11-01', end='2016-01-31'), fill_value=0)
+
+
+# 2. 修正的特征工程函数
+def create_features(df, is_future=False):
+    """
+    创建时间序列特征
+    :param df: 输入DataFrame
+    :param is_future: 是否为未来预测数据
+    :return: 包含特征的DataFrame
+    """
+    df = df.copy()
+    
+    # 基础时间特征
+    df['dayofweek'] = df.index.dayofweek
+    df['weekend'] = (df.index.dayofweek >= 5).astype(int)
+    df['month'] = df.index.month
+    
+    # 特殊日期标记
+    df['double11'] = ((df.index.month == 11) & (df.index.day == 11)).astype(int)
+    df['double12'] = ((df.index.month == 12) & (df.index.day == 12)).astype(int)
+    df['newyear'] = ((df.index.month == 1) & (df.index.day == 1)).astype(int)
+    
+    # 如果不是未来数据，添加统计特征
+    if not is_future:
+        if 'comments' in df.columns:
+            # 滚动统计特征
+            df['7day_avg'] = df['comments'].rolling(7).mean()
+            df['7day_std'] = df['comments'].rolling(7).std()
+            
+            # 滞后特征
+            for i in range(1, 8):
+                df[f'lag_{i}'] = df['comments'].shift(i)
+    
+    return df
+
+# 3. 准备训练数据
+df_rf = pd.DataFrame({'comments': daily_comments})
+df_rf = create_features(df_rf).dropna()
+
+X = df_rf.drop('comments', axis=1)
+y = df_rf['comments']
+
+# 4. 优化随机森林模型
+model = RandomForestRegressor(
+    n_estimators=300,
+    max_depth=8,
+    min_samples_leaf=3,
+    random_state=42,
+    n_jobs=-1
+)
+
+model.fit(X, y)
+
+# 5. 预测未来30天（递归预测）
+future_dates = pd.date_range(start='2016-02-01', end='2016-03-01')
+future_df = pd.DataFrame(index=future_dates)
+future_df = create_features(future_df, is_future=True)  # 标记为未来数据
+
+# 初始化滞后特征（使用最后7天真实值）
+last_window = df_rf['comments'].values[-7:]
+
+predictions = []
+for date in future_dates:
+    # 创建临时数据框用于本次预测
+    temp_df = pd.DataFrame(index=[date])
+    temp_df = create_features(temp_df, is_future=True)
+    
+    # 添加滞后特征
+    for i in range(1, 8):
+        if i <= len(last_window):
+            temp_df[f'lag_{i}'] = last_window[-i]
+        else:
+            temp_df[f'lag_{i}'] = 0
+    
+    # 添加滚动统计特征（使用预测值）
+    if len(predictions) >= 7:
+        temp_df['7day_avg'] = np.mean(predictions[-7:])
+        temp_df['7day_std'] = np.std(predictions[-7:])
+    else:
+        # 使用历史数据的统计特征
+        temp_df['7day_avg'] = df_rf['7day_avg'].iloc[-1]
+        temp_df['7day_std'] = df_rf['7day_std'].iloc[-1]
+    
+    # 确保所有需要的特征都存在
+    for col in X.columns:
+        if col not in temp_df:
+            temp_df[col] = 0
+    
+    # 预测当日值
+    current_features = temp_df[X.columns].fillna(0)
+    pred = max(0, model.predict(current_features)[0])  # 确保非负
+    predictions.append(pred)
+    
+    # 更新最后窗口
+    last_window = np.append(last_window[1:], pred)
+
+# 6. 结果可视化
+plt.figure(figsize=(12, 6))
+
+# 历史数据
+plt.plot(daily_comments.index, daily_comments, 
+         label='实际数据', color='blue', linewidth=2)
+
+# 预测数据
+pred_index = pd.date_range(start='2016-02-01', periods=len(predictions))
+plt.plot(pred_index, predictions, 
+         label='预测值', color='red', linestyle='--', linewidth=2)
+
+# 图表装饰
+plt.title('短期预测', fontsize=14)
+plt.xlabel('日期', fontsize=12)
+plt.ylabel('销量', fontsize=12)
+plt.legend(loc='upper right')
+plt.grid(True, linestyle='--', alpha=0.6)
+
+# 设置坐标范围
+plt.xlim(pd.to_datetime('2015-11-01'), pd.to_datetime('2016-03-01'))
+plt.ylim(0, max(daily_comments.max(), max(predictions)) * 1.1)
+
+# 日期显示
+plt.gca().xaxis.set_major_formatter(plt.matplotlib.dates.DateFormatter('%Y-%m-%d'))
+plt.xticks(rotation=45)
+plt.tight_layout()
+
+plt.savefig(f'{output_dir}/短期预测.png', dpi=300)
+plt.close()
+
+# 7. 保存预测结果
+result_df = pd.DataFrame({
+    '日期': future_dates,
+    '预测销量': predictions,
+    '7天平滑值': pd.Series(predictions).rolling(7, min_periods=1).mean()
+})
+result_df.to_excel(f'{output_dir}/短期预测.xlsx', index=False)
+
+print("预测完成！结果已保存至:", output_dir)
+print("生成图表包括:")
+print(f"3. 预测结果图: {output_dir}/短期预测.png")
